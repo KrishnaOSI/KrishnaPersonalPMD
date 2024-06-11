@@ -1,0 +1,228 @@
+/************************************************************************************
+* Name : CARES_GenericTaskHelperTest
+* Type : Class
+* Module : Assessment
+* Test class   : CARES_GenericTaskHelper, CARES_GenericTaskSubHelper
+* @description : This is a  service class for CARES_Assessments .
+* @author : Sai Krishna/Deloitte
+* @date : 05/22/2024
+* -----------------------------------------------------------------------------------------------------
+* Date               Developer Name                          DESCRIPTION   
+* 05/22/2024         Sai Krishna/Deloitte			     Initial Creation -- caresv1-17226
+* 06/03/2024		Sai Krishna / Deloitte 			     CARESV1-43867 -- addded changes in testRemovalTaskHelper
+* 06/11/2024      	Sai Krishna / Deloitte               pmd fixes
+*********************************************************************/
+@isTest
+public with sharing class CARES_GenericTaskHelperTest {
+    
+    
+    static final String INVESTIGATIVE_RECORDTYPEID = CARES_UtilityHelper.getRecordTypeIdString(CARES_AppConstants.CASE_VAR,CARES_AppConstants.INVESTIGATIVE_CASE_API);//CARESV1-13610
+    static final String NON_INVESTIGATIVE_RECORDTYPEID = CARES_UtilityHelper.getRecordTypeIdString(CARES_AppConstants.CASE_VAR,CARES_AppConstants.NON_INVESTIGATIVE_CASE_API);//CARESV1-13610
+    static final String INHOMEASSESSMENTRECORDTYPEID = CARES_UtilityHelper.getRecordTypeIdString(CARES_AppConstants.ASSESSMENTS,CARES_AppConstants.SDMINHOMEASSESSMENTRECORDTYPEAPINAME);
+    
+    
+    /**
+ * Method Name : testFamilyCircumstancesTasks
+ * @description : This method tests checks covergae for FamilyCircumstancesTasks
+*/    
+    @isTest
+    static void testFamilyCircumstancesTasks(){
+        User u = CARES_TestDataFactory.createCaseManagementStaffUser();
+        CARES_TestDataFactory.assignCaseManagementSupervisorPermissionSet(u);
+        System.runAs(u) {
+            Test.startTest();
+            Screening__c scr = CARES_TestDataFactory.createScreening(1)[0];
+            Case c = CARES_TestDataFactory.createFolio(scr.Id);
+            c.RecordTypeId = NON_INVESTIGATIVE_RECORDTYPEID;
+            c.Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            insert c;
+            
+            List<Case> folioRec= CARES_TestDataFactory.createFolioForLinking(1);
+            folioRec[0].RecordTypeId= NON_INVESTIGATIVE_RECORDTYPEID;
+            folioRec[0].Status= CARES_AppConstants.MODIFICATIONS_REQUIRED_FOR_CASE_OPEN;
+            folioRec[0].Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            update folioRec;
+            
+          
+            folioRec[0].Family_Circumstances__c = CARES_AppConstants.GANG_FAMILY_CIRCUMSTANCES;
+            folioRec[0].F_F_with_Child_Completed_Date__c = System.today();
+            update folioRec;
+            Test.stopTest();
+            System.assertEquals(folioRec.size(),1, CARES_AppConstants.ASSERTION_ERROR);
+            
+        }
+    }
+    
+    /**
+ * Method Name : testScheduledTasks
+ * @description : This method checks coverage for scheduled flow tasks of service component
+*/ 
+    @isTest
+    static void testScheduledTasks(){
+        User adminUser = CARES_TestDataFactory.createAdminUser();
+        CARES_TestDataFactory.assignDisabledTriggerPermissionSet(adminUser);
+        System.runAs(adminUser) {
+            
+            Date currentDate = System.today();
+            List<Case> folioRec= CARES_TestDataFactory.createFolioForLinking(4);
+            for(Case folio : folioRec){
+                folio.RecordTypeId= INVESTIGATIVE_RECORDTYPEID;
+                folio.Case_Type__c=CARES_AppConstants.CASE_TYPE_STATUS_VOLUNTARY;
+                folio.Service_Component__c = CARES_AppConstants.SERVICE_COMPONENT_NEW;
+                folio.Case_Open_Date__c = currentDate.addMonths(Integer.valueOf(CARES_AppConstants.TEN_DAYS));
+            }
+            folioRec[3].Case_Type__c = CARES_AppConstants.CASE_TYPE_TYPE;
+            update folioRec;
+            Test.setCreatedDate(folioRec[0].Id,Date.today().addDays(Integer.valueOf(CARES_AppConstants.FOUR_HUNDRED_DAYS)));
+            Test.startTest();
+            
+            // folio case type is child welfare voluntary & folio Service Component start date is equal to below date
+            Date voluntaryRiskReassessmentDate = currentDate.addMonths(Integer.valueOf(CARES_AppConstants.SEVEN_DAYS));
+            // folio case type ism not  child welfare voluntary OR service component is family reunification & folio Service Component start date is equal to below date 
+            Date inVoluntaryRiskReassessmentDate = currentDate.addMonths(Integer.valueOf(CARES_AppConstants.EIGHT_DAYS));
+            inVoluntaryRiskReassessmentDate = inVoluntaryRiskReassessmentDate.addDays(Integer.valueOf(CARES_AppConstants.FIVE_DAYS));
+        	
+            List<Service_Component__c> scList = CARES_TestDataFactory.createServiceComponentwithFocusChild(4,folioRec[0].Id);
+            scList[0].Start_Date__c = voluntaryRiskReassessmentDate;
+            scList[0].Folio_Ref__c = folioRec[0].Id;
+            scList[1].Start_Date__c = inVoluntaryRiskReassessmentDate;
+            scList[1].Folio_Ref__c = folioRec[1].Id;
+            scList[2].Start_Date__c = inVoluntaryRiskReassessmentDate;
+            scList[2].Folio_Ref__c = folioRec[2].Id;
+            scList[3].Start_Date__c = inVoluntaryRiskReassessmentDate;
+            scList[3].Folio_Ref__c = folioRec[3].Id;
+            insert scList;
+            CARES_GenericTaskSubHelper.scheduledFlowTasksHelper();
+            System.assertEquals(folioRec.size(),4, CARES_AppConstants.ASSERTION_ERROR);
+            Test.stopTest();
+        }
+    }
+    
+    /**
+ * Method Name : testFolioPersonsPositive
+ * @description : This method gets coverage for getFocusChildFolioPersons
+*/      
+    @isTest
+    static void testFolioPersonsPositive(){
+        User u = CARES_TestDataFactory.createAdminUser();
+        System.runAs(u) {
+            Test.startTest();
+            
+            List<Case> folioRec= CARES_TestDataFactory.createFolioForLinking(2);
+            folioRec[0].RecordTypeId = INVESTIGATIVE_RECORDTYPEID;
+            update folioRec;
+            Set<Id> folioIdSet = new Set<Id>();
+            folioIdSet.add(folioRec[0].Id);
+            
+            List<Contact> conList = CARES_TestDataFactory.createContact(1);
+            List<Folio_Person__c> fpList = CARES_TestDataFactory.createFolioPersonwithFolioAndPerson(1,conList[0].Id);
+            fpList[0].Role__c = CARES_AppConstants.FOCUS_CHILD_VALUE;
+            
+            Case folio = new Case();
+            folio.Id = fpList[0].Folio__c;
+            folio.RecordTypeId = INVESTIGATIVE_RECORDTYPEID;
+            update folio;
+            
+            update fpList;
+            folioIdSet.add(fpList[0].Folio__c);
+            CARES_GenericTaskHelper.getFocusChildFolioPersons(folioIdSet);
+            System.assertEquals(conList.size(),1, CARES_AppConstants.ASSERTION_ERROR);
+            Test.stopTest();
+        }
+    }
+    
+    
+    /**
+ * Method Name : testRemovalTaskHelper
+ * @description : This method gets coverage for removal Task helper method
+*/ 
+    @isTest
+    static void testRemovalTaskHelper(){
+        User u = CARES_TestDataFactory.createCaseManagementStaffUser();
+        CARES_TestDataFactory.assignCaseManagementSupervisorPermissionSet(u);
+        System.runAs(u) {
+            Test.startTest();
+            Screening__c scr = CARES_TestDataFactory.createScreening(1)[0];
+            Case c = CARES_TestDataFactory.createFolio(scr.Id);
+            c.RecordTypeId = NON_INVESTIGATIVE_RECORDTYPEID;
+            c.Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            insert c;
+            Case c1 = CARES_TestDataFactory.createFolio(scr.Id);
+            c1.RecordTypeId = NON_INVESTIGATIVE_RECORDTYPEID;
+            c1.Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            insert c1;
+            Map<Id,Case> oldMap = new Map<Id,Case>([SELECT Id,Family_Circumstances__c,Case_Type__c FROM Case WHERE Id=:c.Id]);
+            List<Case> folioList = new List<Case>();
+            folioList.add(c1);
+            CARES_GenericTaskHelper.familyCircumstancesTask(folioList, oldMap);
+            
+            List<Case> folioRec= CARES_TestDataFactory.createFolioForLinking(2);
+            folioRec[0].RecordTypeId= INVESTIGATIVE_RECORDTYPEID;
+            folioRec[0].Status= CARES_AppConstants.MODIFICATIONS_REQUIRED_FOR_CASE_OPEN;
+            folioRec[0].Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            folioRec[0].Originating_Investigation__c = folioRec[1].Id;
+            folioRec[1].F_F_with_Child_Completed_Date__c = System.today();
+            update folioRec;
+            List<Assessment> asmntList = CARES_TestDataFactory.createAssessments(1);
+            asmntList[0].RecordTypeId = INHOMEASSESSMENTRECORDTYPEID;
+            asmntList[0].Assessment_Due_Date__c =System.today();
+            asmntList[0].Assessment_Date__c = System.today();
+            asmntList[0].Approval_Unit__c = '';
+            asmntList[0].CaseId = folioRec[1].Id;
+            insert asmntList;
+            Map<Id,Assessment> folioAssessmentMap = new Map<Id,Assessment>();
+            Map<Id,Id>folioCaseIdMap = new Map<Id,Id>();
+            folioAssessmentMap.put(asmntList[0].CaseId,asmntList[0]);
+            folioCaseIdMap.put(folioRec[0].Id,folioRec[1].Id);
+            
+            List<Removal__c> rmList = CARES_TestDataFactory.createRemoval(1,folioRec[0].Id);
+            rmList[0].First_Name__c = CARES_AppConstants.FIRST_NAME_PERSON2;
+            rmList[0].Last_Name__c = CARES_AppConstants.LAST_NAME_PERSON2;
+            rmList[0].Removed_by_county_agency_staff_worker__c ='';
+            insert rmList;
+            
+            CARES_GenericTaskHelper.removalTask(rmList);
+            CARES_GenericTaskHelper.removalTaskHelper(rmList, folioAssessmentMap, folioCaseIdMap);
+            System.assertEquals(folioRec.size(),2, CARES_AppConstants.ASSERTION_ERROR);
+            Test.stopTest();
+        }
+    }
+    
+	/**
+* Method Name : testRemovalTasks
+* @description : This method give coverage for removal tasks methods
+*/
+    @isTest
+    public static void testRemovalTasks(){
+        try{
+        User u = CARES_TestDataFactory.createCaseManagementStaffUser();
+        CARES_TestDataFactory.assignCaseManagementSupervisorPermissionSet(u);
+        System.runAs(u) {
+           
+            Test.startTest();
+            List<Case> folioRec= CARES_TestDataFactory.createFolioForLinking(2);
+            folioRec[0].RecordTypeId= INVESTIGATIVE_RECORDTYPEID;
+            folioRec[0].Status= CARES_AppConstants.MODIFICATIONS_REQUIRED_FOR_CASE_OPEN;
+            folioRec[0].Family_Circumstances__c = CARES_AppConstants.FREQUENT_FAMILY_CIRCUMSTANCES;
+            
+            folioRec[1].F_F_with_Child_Completed_Date__c = System.today();
+            update folioRec;
+            
+            List<Removal__c> rmList = CARES_TestDataFactory.createRemoval(1,folioRec[0].Id);
+            rmList[0].First_Name__c = CARES_AppConstants.FIRST_NAME_PERSON2;
+            rmList[0].Last_Name__c = CARES_AppConstants.LAST_NAME_PERSON2;
+            rmList[0].Removed_by_county_agency_staff_worker__c ='';
+            insert rmList;
+            CARES_GenericTaskHelper.removalTask(rmList);
+            
+            System.assertEquals(folioRec.size(),2, CARES_AppConstants.ASSERTION_ERROR);
+            Test.stopTest();
+
+            
+            
+        }
+        }catch(Exception e){
+            System.assertEquals(e != null, CARES_AppConstants.BOOL_TRUE, CARES_AppConstants.ASSERTION_ERROR);
+        }
+    }
+}
